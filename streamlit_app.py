@@ -99,39 +99,39 @@ def display_combined_tab(data):
                 st.info(f"No data for {uni}.")
                 continue
 
-            # Build normalized table
+            # Precompute cross‑sectional z‑scores per model (standardize each model's forecasts across all ETFs)
+            z_scores_per_model = {}
+            for model in model_names:
+                fcast_dict = model_forecasts.get(model, {})
+                if not fcast_dict:
+                    continue
+                values = list(fcast_dict.values())
+                arr = np.array(values)
+                mean = arr.mean()
+                std = arr.std()
+                if std > 0:
+                    z_scores_per_model[model] = {t: (fcast_dict[t] - mean) / std for t in fcast_dict}
+                else:
+                    z_scores_per_model[model] = {t: 0.0 for t in fcast_dict}
+
+            # Build table
             rows = []
             for t in sorted(tickers):
                 row = {'Ticker': t}
-                raw = []
+                z_vals = []
                 for model in model_names:
                     val = model_forecasts.get(model, {}).get(t, None)
                     row[f"{model} (raw)"] = f"{val*100:.3f}%" if val is not None else "N/A"
-                    if val is not None:
-                        raw.append(val)
-                # Compute z-scores for this ETF across models that have a value
-                if raw:
-                    raw_arr = np.array(raw)
-                    mean = raw_arr.mean()
-                    std = raw_arr.std()
-                    if std > 0:
-                        z_scores = (raw_arr - mean) / std
-                    else:
-                        z_scores = np.zeros_like(raw_arr)
-                    # Add z-scores to row
-                    for i, model in enumerate(model_names):
-                        if model_forecasts.get(model, {}).get(t) is not None:
-                            row[f"{model} (z)"] = f"{z_scores[i]:.2f}"
-                        else:
-                            row[f"{model} (z)"] = "N/A"
-                    # Consensus score = average z-score
-                    row['Consensus (avg z)'] = f"{z_scores.mean():.2f}"
-                else:
-                    row['Consensus (avg z)'] = "N/A"
+                    z = z_scores_per_model.get(model, {}).get(t, None)
+                    row[f"{model} (z)"] = f"{z:.2f}" if z is not None else "N/A"
+                    if z is not None:
+                        z_vals.append(z)
+                # Consensus = average z‑score across models for this ETF
+                row['Consensus (avg z)'] = f"{np.mean(z_vals):.2f}" if z_vals else "N/A"
                 rows.append(row)
 
             df = pd.DataFrame(rows)
-            # Sort by consensus z-score descending
+            # Sort by consensus z‑score descending
             df_sorted = df.sort_values("Consensus (avg z)", ascending=False)
             st.dataframe(df_sorted, use_container_width=True, hide_index=True)
 
