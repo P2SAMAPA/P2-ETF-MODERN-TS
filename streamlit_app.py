@@ -1,9 +1,10 @@
 """
-Streamlit Dashboard for Modern TS Engine (4 tabs).
+Streamlit Dashboard for Modern TS Engine (4 + 1 tabs).
 """
 
 import streamlit as st
 import pandas as pd
+import numpy as np
 from huggingface_hub import HfApi, hf_hub_download
 import json
 import config
@@ -18,6 +19,7 @@ st.markdown("""
     .hero-ticker { font-size: 4rem; font-weight: 800; }
     .metric-positive { color: #28a745; font-weight: 600; }
     .metric-negative { color: #dc3545; font-weight: 600; }
+    .combined-header { font-size: 1.8rem; font-weight: 600; margin-top: 2rem; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -74,6 +76,77 @@ def display_model_tab(model_data, model_name):
                 df_all = pd.DataFrame(all_rows).sort_values("Forecast", ascending=False)
                 st.dataframe(df_all, use_container_width=True, hide_index=True)
 
+def display_combined_tab(data):
+    if not data:
+        st.warning("No data available.")
+        return
+    model_names = ["PatchTST", "TimesNet", "TSMixer", "FiLM"]
+    universes = ["COMBINED", "EQUITY_SECTORS", "FI_COMMODITIES"]
+    subtabs = st.tabs(["📊 Combined", "📈 Equity Sectors", "💰 FI/Commodities"])
+    for subtab, uni in zip(subtabs, universes):
+        with subtab:
+            st.markdown(f"### {uni} – Combined Forecasts (Normalized)")
+            # Collect forecasts per model per ETF
+            tickers = set()
+            model_forecasts = {}
+            for model in model_names:
+                model_data = data.get(model, {}).get('universes', {}).get(uni, {})
+                if model_data:
+                    tickers.update(model_data.keys())
+                    model_forecasts[model] = model_data
+
+            if not tickers:
+                st.info(f"No data for {uni}.")
+                continue
+
+            # Build normalized table
+            rows = []
+            for t in sorted(tickers):
+                row = {'Ticker': t}
+                raw = []
+                for model in model_names:
+                    val = model_forecasts.get(model, {}).get(t, None)
+                    row[f"{model} (raw)"] = f"{val*100:.3f}%" if val is not None else "N/A"
+                    if val is not None:
+                        raw.append(val)
+                # Compute z-scores for this ETF across models that have a value
+                if raw:
+                    raw_arr = np.array(raw)
+                    mean = raw_arr.mean()
+                    std = raw_arr.std()
+                    if std > 0:
+                        z_scores = (raw_arr - mean) / std
+                    else:
+                        z_scores = np.zeros_like(raw_arr)
+                    # Add z-scores to row
+                    for i, model in enumerate(model_names):
+                        if model_forecasts.get(model, {}).get(t) is not None:
+                            row[f"{model} (z)"] = f"{z_scores[i]:.2f}"
+                        else:
+                            row[f"{model} (z)"] = "N/A"
+                    # Consensus score = average z-score
+                    row['Consensus (avg z)'] = f"{z_scores.mean():.2f}"
+                else:
+                    row['Consensus (avg z)'] = "N/A"
+                rows.append(row)
+
+            df = pd.DataFrame(rows)
+            # Sort by consensus z-score descending
+            df_sorted = df.sort_values("Consensus (avg z)", ascending=False)
+            st.dataframe(df_sorted, use_container_width=True, hide_index=True)
+
+            # Highlight top pick based on consensus
+            top_row = df_sorted.iloc[0]
+            top_ticker = top_row['Ticker']
+            top_consensus = top_row['Consensus (avg z)']
+            st.markdown(f"""
+            <div class="hero-card">
+                <div style="font-size: 1.2rem; opacity: 0.8;">🏆 CONSENSUS TOP PICK</div>
+                <div class="hero-ticker">{top_ticker}</div>
+                <div>Avg Z‑Score: {top_consensus}</div>
+            </div>
+            """, unsafe_allow_html=True)
+
 # --- Sidebar ---
 st.sidebar.markdown("## ⚙️ Configuration")
 calendar = USMarketCalendar()
@@ -83,13 +156,13 @@ if data:
     st.sidebar.markdown(f"**Run Date:** {data.get('run_date', 'Unknown')}")
 
 st.markdown('<div class="main-header">⏰ P2Quant Modern TS</div>', unsafe_allow_html=True)
-st.markdown('<div>Modern Time‑Series Models: PatchTST, TimesNet, TSMixer, FiLM</div>', unsafe_allow_html=True)
+st.markdown('<div>Modern Time‑Series Models: PatchTST, TimesNet, TSMixer, FiLM + Combined View</div>', unsafe_allow_html=True)
 
 if data is None:
     st.warning("No data available.")
     st.stop()
 
-tab1, tab2, tab3, tab4 = st.tabs(["🧩 PatchTST", "🌊 TimesNet", "⚙️ TSMixer", "🎛️ FiLM"])
+tab1, tab2, tab3, tab4, tab5 = st.tabs(["🧩 PatchTST", "🌊 TimesNet", "⚙️ TSMixer", "🎛️ FiLM", "📊 Combined"])
 
 with tab1:
     display_model_tab(data.get("PatchTST"), "PatchTST")
@@ -99,3 +172,5 @@ with tab3:
     display_model_tab(data.get("TSMixer"), "TSMixer")
 with tab4:
     display_model_tab(data.get("FiLM"), "FiLM")
+with tab5:
+    display_combined_tab(data)
