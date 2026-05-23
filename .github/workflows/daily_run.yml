@@ -2,7 +2,7 @@ name: Daily Modern TS Run
 
 on:
   schedule:
-    - cron: '30 02 * * 1-5'
+    - cron: '30 01 * * 1-6'
   workflow_dispatch:
 
 jobs:
